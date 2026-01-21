@@ -12,7 +12,7 @@ from email.utils import formataddr
 # ================= 配置区域 =================
 
 # 1. 扫描数量
-TOP_COUNT = 50 
+TOP_COUNT = 300 
 
 # 2. 目标形态 (0=跌, 1=涨，左侧为最新日期)
 TARGET_PATTERN = "00011111" 
@@ -131,6 +131,18 @@ def main():
         pattern = get_fund_pattern(code)
         
         if pattern:
+            fund_data = {
+                "code": code,
+                "name": name,
+                "pattern": pattern
+            }
+            
+            if ENABLE_HOT_SORT:
+                fund_data["hot_rank"] = f"{SORT_KEY}第{index+1}名"
+
+            # 打印过程日志
+            print(json.dumps(fund_data, ensure_ascii=False))
+
             if pattern.startswith(TARGET_PATTERN):
                 matches.append({"code": code, "name": name, "pattern": pattern})
         time.sleep(0.2)
