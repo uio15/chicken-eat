@@ -1,4 +1,4 @@
-# index.py (修复版)
+# index.py
 import akshare as ak
 import sys
 import time
@@ -7,7 +7,7 @@ import pandas as pd
 import smtplib
 import os
 from email.mime.text import MIMEText
-from email.header import Header
+from email.utils import formataddr
 
 # ================= 配置区域 =================
 
@@ -15,16 +15,15 @@ from email.header import Header
 TOP_COUNT = 50 
 
 # 2. 目标形态 (0=跌, 1=涨，左侧为最新日期)
-# 含义：最近3天跌，紧接着前5天是涨 (3跌5涨)
 TARGET_PATTERN = "00011111" 
 
 # 3. 是否开启热门排序功能
 ENABLE_HOT_SORT = True
 
-# 4. 排序标准 (仅当 ENABLE_HOT_SORT = True 时生效)
+# 4. 排序标准
 SORT_KEY = "近6月"
 
-# 5. 是否开启去重 (同名基金 A/C 只保留一个)
+# 5. 是否开启去重
 ENABLE_DEDUPLICATE = True
 
 # ===========================================
@@ -44,49 +43,52 @@ def get_fund_pattern(code):
 
 def send_email(content):
     """
-    发送邮件函数（已升级为 send_message 方法，修复 502 错误）
+    发送邮件函数 (修复 502 Invalid Input 问题)
     """
     sender = os.environ.get('EMAIL_SENDER')
-    password = os.environ.get('EMAIL_PASSWORD')
+    password = os.environ.get('EMAIL_PASSWORD') # 注意：这里必须是QQ邮箱的授权码，不是QQ密码
     receivers_str = os.environ.get('EMAIL_RECEIVERS')
     
     if not sender or not password or not receivers_str:
         print("❌ 环境变量缺失，无法发送邮件。请检查 GitHub Secrets。")
         return
 
-    # 处理收件人，支持逗号分隔
     receivers = [r.strip() for r in receivers_str.split(',')]
-    
-    # 邮件内容设置
-    message = MIMEText(content, 'plain', 'utf-8')
-    message['From'] = Header(f"基金分析机器人 <{sender}>", 'utf-8')
-    # 注意：这里的 To 只是显示用，实际发给谁由 send_message 的 to_addrs 参数决定
-    message['To'] =  Header("订阅者", 'utf-8')
     
     current_date = time.strftime("%Y-%m-%d", time.localtime())
     subject = f'【基金日报】{current_date} 走势筛选结果'
-    message['Subject'] = Header(subject, 'utf-8')
+
+    # === 构造邮件对象 ===
+    msg = MIMEText(content, 'plain', 'utf-8')
+    
+    # 修复 1: 使用 formataddr 标准化发件人写法
+    msg['From'] = formataddr(("基金分析机器人", sender))
+    
+    # 修复 2: 收件人头部必须包含真实邮箱，否则QQ容易报错 502
+    # 如果只有一个收件人，直接放；如果有多个，用逗号连接
+    msg['To'] = ",".join(receivers)
+    
+    msg['Subject'] = subject
 
     try:
-        # QQ邮箱使用 SSL (端口 465)
-        smtp_server = "smtp.qq.com" 
-        server = smtplib.SMTP_SSL(smtp_server, 465) 
+        smtp_server = "smtp.qq.com"
+        # QQ邮箱 SSL 端口通常是 465
+        server = smtplib.SMTP_SSL(smtp_server, 465)
+        
+        # 打印调试信息 (GitHub Actions 日志中可见)
+        print(f"🔄 正在连接 SMTP 服务器... 发送给: {receivers}")
+        
         server.login(sender, password)
-        
-        # === 核心修复点 ===
-        # 使用 send_message 替代 sendmail + as_string
-        # Python 会自动处理头信息和换行符（CRLF），解决 GitHub Actions 下的 502 错误
-        server.send_message(message, from_addr=sender, to_addrs=receivers)
-        
+        server.sendmail(sender, receivers, msg.as_string())
         server.quit()
         print("✅ 邮件发送成功！")
     except smtplib.SMTPException as e:
         print(f"❌ 邮件发送失败: {e}")
+    except Exception as e:
+        print(f"❌ 发生未知错误: {e}")
 
 def main():
     print(f"🚀 启动选基程序...")
-    
-    # 用于收集输出结果的字符串
     result_buffer = []
     
     def log(text):
@@ -117,6 +119,8 @@ def main():
         
     except Exception as e:
         log(f"❌ 获取榜单失败: {e}")
+        # 即使失败也尝试发送报错日志
+        send_email("\n".join(result_buffer))
         return
 
     matches = []
@@ -142,7 +146,6 @@ def main():
         log(f"\n⚠️ 未发现符合该走势的基金。")
 
     # === 发送邮件 ===
-    # 只要不为空就发送（或者你可以只在有结果时发送：if matches: ...）
     email_content = "\n".join(result_buffer)
     send_email(email_content)
 
