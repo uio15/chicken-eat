@@ -1,4 +1,4 @@
-# index.py (修复 502 错误 + 格式规范版)
+# index.py (最终修正版 - 专治 QQ 邮箱 502 错误)
 import akshare as ak
 import sys
 import time
@@ -8,7 +8,7 @@ import smtplib
 import os
 from email.mime.text import MIMEText
 from email.header import Header
-from email.utils import formataddr  # <--- 引入这个关键库
+from email.utils import formataddr
 
 # ================= 配置区域 =================
 
@@ -55,57 +55,53 @@ def send_email(content):
     receivers_str = os.environ.get('EMAIL_RECEIVERS')
     
     if not sender or not password or not receivers_str:
-        print("❌ 环境变量缺失 (EMAIL_SENDER/PASSWORD/RECEIVERS)，跳过发送邮件。")
+        print("❌ 环境变量缺失，跳过发送邮件。")
         return
 
     receivers = [r.strip() for r in receivers_str.split(',')]
     
+    # === 关键修改：构建极简邮件对象 ===
     message = MIMEText(content, 'plain', 'utf-8')
     
-    # === 【关键修改】使用 formataddr 生成标准头部 ===
-    # 以前的写法: Header(f"名字 <{sender}>") -> 导致 QQ 解析失败
-    # 标准写法: formataddr(("名字", "邮箱地址"))
-    message['From'] = formataddr(("基金策略机器人", sender))
+    # 【重点】QQ邮箱在海外IP环境下，极度反感带有中文别名的 From 头
+    # 必须保持 From 和实际发件人完全一致，不要加 "机器人 <xxx>" 这种格式
+    message['From'] = sender
     
-    # To 头部必须包含邮箱地址，否则 QQ 会报 502 Invalid input
-    # 这里我们展示第一个收件人的名字，或者直接用 ",".join(receivers)
-    message['To'] = formataddr(("订阅者", receivers[0])) 
+    # To 头部同理，只放邮箱地址，如果有多个收件人，用逗号连接
+    message['To'] = ",".join(receivers)
     
     current_date = time.strftime("%Y-%m-%d", time.localtime())
-    subject = f'【基金日报】{current_date} 形态筛选结果'
+    subject = f'基金日报 {current_date} 筛选结果'
     message['Subject'] = Header(subject, 'utf-8')
 
     try:
-        # QQ邮箱 SMTP 配置
-        smtp_server = "smtp.qq.com" 
-        server = smtplib.SMTP_SSL(smtp_server, 465) 
+        # 1. 连接服务器
+        smtp_server = "smtp.qq.com"
+        server = smtplib.SMTP_SSL(smtp_server, 465)
+        
+        # 2. 打印调试信息 (可选)
+        # server.set_debuglevel(1) 
+        
+        # 3. 登录并发送
         server.login(sender, password)
         server.sendmail(sender, receivers, message.as_string())
         server.quit()
         print("📧 邮件发送成功！")
     except smtplib.SMTPException as e:
         print(f"❌ 邮件发送失败: {e}")
-        # 如果还是 502，可能是 IP 被封，建议尝试换 163 邮箱
-        if "502" in str(e):
-            print("💡 提示：QQ邮箱可能拦截了 GitHub 的美国IP。建议更换发送邮箱为 163邮箱 (smtp.163.com) 尝试。")
+        # 如果依然报错，那只能建议换 163 邮箱了，网易对 GitHub IP 更友好
+        print("💡 建议：如果持续失败，请尝试注册一个 163 邮箱作为发件人。")
 
 def main():
     print(f"🚀 启动选基程序...")
     current_time_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
     print(f"分析时间: {current_time_str}")
-    print(f"🎯 目标形态: [{TARGET_PATTERN}...] (左侧代表最新)")
     
-    sort_status = f"开启 (按{SORT_KEY})" if ENABLE_HOT_SORT else "关闭"
-    dedup_status = "开启 (优先保留C类)" if ENABLE_DEDUPLICATE else "关闭"
-    
-    print(f"🔥 热门排序: {sort_status}")
-    print(f"✂️  同名去重: {dedup_status}")
-    print("-" * 60)
-
     try:
         rank_df = ak.fund_open_fund_rank_em(symbol="全部")
         if ENABLE_HOT_SORT:
             rank_df[SORT_KEY] = pd.to_numeric(rank_df[SORT_KEY], errors='coerce')
+            rank_df.sort_values(by=SORT_KEY, ascending=False, inplace=True)
 
         if ENABLE_DEDUPLICATE:
             rank_df['base_name'] = rank_df['基金简称'].str.replace(r'[AC]$', '', regex=True)
@@ -113,9 +109,6 @@ def main():
             rank_df.sort_values(by=['base_name', 'prio'], ascending=[True, True], inplace=True)
             rank_df.drop_duplicates(subset=['base_name'], keep='first', inplace=True)
             rank_df.drop(columns=['base_name', 'prio'], inplace=True)
-
-        if ENABLE_HOT_SORT:
-            rank_df.sort_values(by=SORT_KEY, ascending=False, inplace=True)
 
         rank_df.reset_index(drop=True, inplace=True)
         top_funds = rank_df.head(TOP_COUNT)
@@ -132,48 +125,35 @@ def main():
         pattern = get_fund_pattern(code)
         
         if pattern:
-            fund_data = {
-                "code": code,
-                "name": name,
-                "pattern": pattern
-            }
-            if ENABLE_HOT_SORT:
-                fund_data["hot_rank"] = f"{SORT_KEY}第{index+1}名"
-            
-            # 打印详细日志到控制台
-            print(json.dumps(fund_data, ensure_ascii=False))
-
+            # 简单日志，防止GitHub Actions日志过大
+            print(f"分析中: {code} - {name}")
             if pattern.startswith(TARGET_PATTERN):
-                matches.append(fund_data)
-        else:
-            print(json.dumps({"code": code, "name": name, "error": "数据不足"}, ensure_ascii=False))
-        
+                matches.append({"code": code, "name": name, "pattern": pattern})
         time.sleep(0.2)
 
-    print("-" * 60)
+    print("-" * 30)
     print(f"✅ 扫描结束。")
     
+    # === 构建邮件内容 ===
     email_lines = []
     email_lines.append(f"分析时间: {current_time_str}")
     email_lines.append(f"目标形态: [{TARGET_PATTERN}]")
     email_lines.append("-" * 30)
 
     if matches:
-        summary_title = f"🎉 发现 {len(matches)} 个符合条件的基金 (已去重)：\n"
-        print(summary_title) 
-        email_lines.append(summary_title) 
-
+        summary_title = f"🎉 发现 {len(matches)} 个符合条件的基金：\n"
+        print(summary_title)
+        email_lines.append(summary_title)
         for m in matches:
-            result_line = f"[{m['code']}] {m['name']} | {m['pattern']}"
-            print(result_line)
-            email_lines.append(result_line)
+            line = f"[{m['code']}] {m['name']} | {m['pattern']}"
+            print(line)
+            email_lines.append(line)
     else:
-        no_result_msg = f"⚠️ 未发现符合该走势的基金。"
-        print(no_result_msg)
-        email_lines.append(no_result_msg)
+        msg = "⚠️ 未发现符合该走势的基金。"
+        print(msg)
+        email_lines.append(msg)
 
-    full_email_content = "\n".join(email_lines)
-    send_email(full_email_content)
+    send_email("\n".join(email_lines))
 
 if __name__ == "__main__":
     main()
