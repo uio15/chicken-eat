@@ -2,8 +2,8 @@ name: Daily Fund Analysis
 
 on:
   schedule:
-    # 每天 UTC 06:00 运行 (即北京时间 14:00)
-    - cron: '0 6 * * *'
+    # 每天13:49触发 (北京时间)
+    - cron: '49 5 * * *'
   # 允许手动触发 (方便测试)
   workflow_dispatch:
 
