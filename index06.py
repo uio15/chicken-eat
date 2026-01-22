@@ -12,10 +12,11 @@ from email.utils import formataddr
 # ================= 配置区域 =================
 
 # 1. 扫描数量
-TOP_COUNT = 300 
+TOP_COUNT = 50 
 
 # 2. 目标形态 (0=跌, 1=涨，左侧为最新日期)
-TARGET_PATTERN = "00011111" 
+# 1001 或 100111 (黄金 N 字底)
+TARGET_PATTERN = "1001" 
 
 # 3. 是否开启热门排序功能
 ENABLE_HOT_SORT = True
