@@ -2,8 +2,8 @@ name: Daily Fund Analysis
 
 on:
   schedule:
-    # 每天13:49触发 (北京时间)
-    - cron: '49 5 * * *'
+    # 周一到周五 13:49 触发 (北京时间)
+    - cron: '49 5 * * 1-5'
   # 允许手动触发 (方便测试)
   workflow_dispatch:
 
@@ -25,11 +25,45 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
 
+    - name: Check CN trading day
+      id: trading_day
+      run: |
+        python - <<'PY'
+        import os
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        import akshare as ak
+        import pandas as pd
+
+        today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
+
+        try:
+          df = ak.tool_trade_date_hist_sina()
+          dates = pd.to_datetime(df["trade_date"]).dt.date
+          max_date = max(dates) if len(dates) else None
+
+          if max_date and today > max_date:
+            is_trade = today.weekday() < 5
+          else:
+            is_trade = today in set(dates)
+        except Exception:
+          # 若交易日历接口异常，退化为“工作日”判断，避免误判导致一直不跑
+          is_trade = today.weekday() < 5
+
+        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+          f.write(f"is_trade={'true' if is_trade else 'false'}\n")
+
+        print(f"Beijing date: {today} | is_trade={is_trade}")
+        PY
+
     - name: Run analysis script
+      if: steps.trading_day.outputs.is_trade == 'true'
       env:
         # 将 GitHub Settings 里的 Secrets 注入到环境变量中
         EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
         EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
         EMAIL_RECEIVERS: ${{ secrets.EMAIL_RECEIVERS }}
       run: |
-        python index06.py
+        python index08.py
+        python index_etf.py
